@@ -126,6 +126,9 @@ function tcmbXmlToJson(xmlText) {
     const key = `${code}TRY`;
     const alis = numOrNull(pickTag(block, "ForexBuying"));
     const satis = numOrNull(pickTag(block, "ForexSelling"));
+    const dusuk = numOrNull(pickTag(block, "BanknoteBuying"));
+    const yuksek = numOrNull(pickTag(block, "BanknoteSelling"));
+    const kapanis = numOrNull(pickTag(block, "BanknoteSelling"));
     const isim = pickTag(block, "Isim") || pickTag(block, "CurrencyName") || "";
 
     data[key] = {
@@ -138,9 +141,9 @@ function tcmbXmlToJson(xmlText) {
         alis_dir: "",
         satis_dir: ""
       },
-      dusuk: alis,
-      yuksek: satis,
-      kapanis: alis
+      dusuk: dusuk,
+      yuksek: yuksek,
+      kapanis: kapanis
     };
   }
 
