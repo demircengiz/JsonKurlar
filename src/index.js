@@ -126,9 +126,11 @@ function tcmbXmlToJson(xmlText) {
     const key = `${code}TRY`;
     const alis = numOrNull(pickTag(block, "ForexBuying"));
     const satis = numOrNull(pickTag(block, "ForexSelling"));
+    const isim = pickTag(block, "Isim") || pickTag(block, "CurrencyName") || "";
 
     data[key] = {
       code: key,
+      adi: isim,
       alis: alis,
       satis: satis,
       tarih: tarih,
