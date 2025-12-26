@@ -1,7 +1,3 @@
 name = "haremaltin-tcmb"
 main = "src/index.js"
 compatibility_date = "2025-12-26"
-
-# Her saat başı cache'i güncelle
-[triggers]
-crons = ["0 * * * *"]
