@@ -1,13 +1,3 @@
-// Gece modu için bellekte cache (her worker instance için ayrı)
-const nightCache = {
-  haremaltin: null,
-  tcmb: null,
-  timestamp: {
-    haremaltin: 0,
-    tcmb: 0
-  }
-};
-
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -38,35 +28,10 @@ async function handleHaremAltin(ctx) {
   const cache = caches.default;
   const cacheKey = new Request("https://cache.local/haremaltin");
 
-  // Türkiye saati kontrolü (UTC+3)
-  const turkeyHour = (new Date().getUTCHours() + 3) % 24;
-  const isNightMode = turkeyHour >= 0 && turkeyHour < 6;
-
-  // Gece modu: Bellekteki cache'i kullan
-  if (isNightMode) {
-    if (nightCache.haremaltin) {
-      return new Response(nightCache.haremaltin, {
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "X-Night-Cache": "true",
-          "X-Cached-At": nightCache.timestamp.haremaltin.toString()
-        }
-      });
-    }
-    // Cache yoksa bir kere çek ve belleğe yaz
-  } else {
-    // Gündüz modu başladığında gece cache'ini temizle
-    nightCache.haremaltin = null;
-    nightCache.timestamp.haremaltin = 0;
-  }
-
-  // Gündüz modu: Normal cache kontrolü
-  if (!isNightMode) {
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      const cachedAt = cached.headers.get("X-Cached-At");
-      if (cachedAt && Date.now() - Number(cachedAt) < 10_000) return cached;
-    }
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const cachedAt = cached.headers.get("X-Cached-At");
+    if (cachedAt && Date.now() - Number(cachedAt) < 10_000) return cached;
   }
 
   const controller = new AbortController();
@@ -83,35 +48,18 @@ async function handleHaremAltin(ctx) {
     });
 
     if (!upstream.ok) {
-      const cached = await cache.match(cacheKey);
       if (cached) return cached;
       return jsonErr(502, { ok: false, error: "Upstream failed", status: upstream.status });
     }
 
-    const responseText = await upstream.text();
-    
-    // Gece modunda belleğe kaydet
-    if (isNightMode) {
-      nightCache.haremaltin = responseText;
-      nightCache.timestamp.haremaltin = Date.now();
-    }
+    const res = new Response(upstream.body, upstream);
+    res.headers.set("Content-Type", "application/json; charset=utf-8");
+    res.headers.set("Cache-Control", "public, max-age=5");
+    res.headers.set("X-Cached-At", Date.now().toString());
 
-    const res = new Response(responseText, {
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "public, max-age=5",
-        "X-Cached-At": Date.now().toString()
-      }
-    });
-
-    // Gündüz modunda disk cache'e yaz
-    if (!isNightMode) {
-      ctx.waitUntil(cache.put(cacheKey, res.clone()));
-    }
-    
+    ctx.waitUntil(cache.put(cacheKey, res.clone()));
     return res;
   } catch (e) {
-    const cached = await cache.match(cacheKey);
     if (cached) return cached;
     return jsonErr(502, { ok: false, error: "Fetch error", detail: String(e) });
   } finally {
@@ -124,35 +72,10 @@ async function handleTCMB(ctx) {
   const cache = caches.default;
   const cacheKey = new Request("https://cache.local/tcmb-today");
 
-  // Türkiye saati kontrolü (UTC+3)
-  const turkeyHour = (new Date().getUTCHours() + 3) % 24;
-  const isNightMode = turkeyHour >= 0 && turkeyHour < 6;
-
-  // Gece modu: Bellekteki cache'i kullan
-  if (isNightMode) {
-    if (nightCache.tcmb) {
-      return new Response(nightCache.tcmb, {
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "X-Night-Cache": "true",
-          "X-Cached-At": nightCache.timestamp.tcmb.toString()
-        }
-      });
-    }
-    // Cache yoksa bir kere çek ve belleğe yaz
-  } else {
-    // Gündüz modu başladığında gece cache'ini temizle
-    nightCache.tcmb = null;
-    nightCache.timestamp.tcmb = 0;
-  }
-
-  // Gündüz modu: Normal cache kontrolü
-  if (!isNightMode) {
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      const cachedAt = cached.headers.get("X-Cached-At");
-      if (cachedAt && Date.now() - Number(cachedAt) < 60_000) return cached;
-    }
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const cachedAt = cached.headers.get("X-Cached-At");
+    if (cachedAt && Date.now() - Number(cachedAt) < 60_000) return cached;
   }
 
   const controller = new AbortController();
@@ -169,22 +92,14 @@ async function handleTCMB(ctx) {
     });
 
     if (!upstream.ok) {
-      const cached = await cache.match(cacheKey);
       if (cached) return cached;
       return jsonErr(502, { ok: false, error: "TCMB upstream failed", status: upstream.status });
     }
 
     const xmlText = await upstream.text();
     const jsonData = tcmbXmlToJson(xmlText);
-    const jsonString = JSON.stringify(jsonData);
 
-    // Gece modunda belleğe kaydet
-    if (isNightMode) {
-      nightCache.tcmb = jsonString;
-      nightCache.timestamp.tcmb = Date.now();
-    }
-
-    const res = new Response(jsonString, {
+    const res = new Response(JSON.stringify(jsonData), {
       status: 200,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
@@ -193,14 +108,9 @@ async function handleTCMB(ctx) {
       }
     });
 
-    // Gündüz modunda disk cache'e yaz
-    if (!isNightMode) {
-      ctx.waitUntil(cache.put(cacheKey, res.clone()));
-    }
-    
+    ctx.waitUntil(cache.put(cacheKey, res.clone()));
     return res;
   } catch (e) {
-    const cached = await cache.match(cacheKey);
     if (cached) return cached;
     return jsonErr(502, { ok: false, error: "TCMB fetch error", detail: String(e) });
   } finally {
