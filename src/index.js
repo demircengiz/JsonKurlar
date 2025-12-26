@@ -14,6 +14,14 @@ export default {
 
 async function handleHaremAltin(ctx) {
   const TARGET = "https://canlipiyasalar.haremaltin.com/tmp/altin.json?dil_kodu=tr";
+  const cache = caches.default;
+  const cacheKey = new Request("https://cache.local/haremaltin");
+
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const cachedAt = cached.headers.get("X-Cached-At");
+    if (cachedAt && Date.now() - Number(cachedAt) < 10_000) return cached;
+  }
 
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), 4500);
@@ -29,14 +37,19 @@ async function handleHaremAltin(ctx) {
     });
 
     if (!upstream.ok) {
+      if (cached) return cached;
       return jsonErr(502, { ok: false, error: "Upstream failed", status: upstream.status });
     }
 
     const res = new Response(upstream.body, upstream);
     res.headers.set("Content-Type", "application/json; charset=utf-8");
-    res.headers.set("Cache-Control", "no-cache");
+    res.headers.set("Cache-Control", "public, max-age=5");
+    res.headers.set("X-Cached-At", Date.now().toString());
+
+    ctx.waitUntil(cache.put(cacheKey, res.clone()));
     return res;
   } catch (e) {
+    if (cached) return cached;
     return jsonErr(502, { ok: false, error: "Fetch error", detail: String(e) });
   } finally {
     clearTimeout(t);
@@ -45,6 +58,14 @@ async function handleHaremAltin(ctx) {
 
 async function handleTCMB(ctx) {
   const TARGET = "https://www.tcmb.gov.tr/kurlar/today.xml";
+  const cache = caches.default;
+  const cacheKey = new Request("https://cache.local/tcmb-today");
+
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const cachedAt = cached.headers.get("X-Cached-At");
+    if (cachedAt && Date.now() - Number(cachedAt) < 60_000) return cached;
+  }
 
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), 4500);
@@ -60,20 +81,26 @@ async function handleTCMB(ctx) {
     });
 
     if (!upstream.ok) {
+      if (cached) return cached;
       return jsonErr(502, { ok: false, error: "TCMB upstream failed", status: upstream.status });
     }
 
     const xmlText = await upstream.text();
     const jsonData = tcmbXmlToJson(xmlText);
 
-    return new Response(JSON.stringify(jsonData), {
+    const res = new Response(JSON.stringify(jsonData), {
       status: 200,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-cache"
+        "Cache-Control": "public, max-age=30",
+        "X-Cached-At": Date.now().toString()
       }
     });
+
+    ctx.waitUntil(cache.put(cacheKey, res.clone()));
+    return res;
   } catch (e) {
+    if (cached) return cached;
     return jsonErr(502, { ok: false, error: "TCMB fetch error", detail: String(e) });
   } finally {
     clearTimeout(t);
