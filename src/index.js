@@ -34,13 +34,15 @@ async function handleHaremAltin(ctx) {
 
   const cached = await cache.match(cacheKey);
   
-  // Gece modu: Sadece cache'den çalış
-  if (isNightMode) {
-    if (cached) return cached;
-    return jsonErr(503, { ok: false, error: "Night mode: Service unavailable, no cached data" });
+  // Gece modu: Cache varsa ve yeterince yeniyse kullan
+  if (isNightMode && cached) {
+    const cachedAt = cached.headers.get("X-Cached-At");
+    // Cache 2 saatten yeniyse kullan, değilse yeniden çek
+    if (cachedAt && Date.now() - Number(cachedAt) < 7200_000) return cached;
   }
 
-  if (cached) {
+  // Gündüz modu cache kontrolü
+  if (!isNightMode && cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
     if (cachedAt && Date.now() - Number(cachedAt) < 10_000) return cached;
   }
@@ -89,13 +91,15 @@ async function handleTCMB(ctx) {
 
   const cached = await cache.match(cacheKey);
   
-  // Gece modu: Sadece cache'den çalış
-  if (isNightMode) {
-    if (cached) return cached;
-    return jsonErr(503, { ok: false, error: "Night mode: Service unavailable, no cached data" });
+  // Gece modu: Cache varsa ve yeterince yeniyse kullan
+  if (isNightMode && cached) {
+    const cachedAt = cached.headers.get("X-Cached-At");
+    // Cache 2 saatten yeniyse kullan, değilse yeniden çek
+    if (cachedAt && Date.now() - Number(cachedAt) < 7200_000) return cached;
   }
 
-  if (cached) {
+  // Gündüz modu cache kontrolü
+  if (!isNightMode && cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
     if (cachedAt && Date.now() - Number(cachedAt) < 60_000) return cached;
   }
