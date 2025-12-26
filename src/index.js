@@ -9,6 +9,17 @@ export default {
       JSON.stringify({ ok: false, routes: ["/haremaltin", "/tcmb"] }),
       { status: 404, headers: { "Content-Type": "application/json; charset=utf-8" } }
     );
+  },
+
+  // Scheduled event - her saat başı cache'i güncelle
+  async scheduled(event, env, ctx) {
+    console.log("Scheduled cache refresh started");
+    
+    // Her iki endpoint için de cache'i güncelle
+    await Promise.all([
+      refreshCache(ctx, "haremaltin"),
+      refreshCache(ctx, "tcmb")
+    ]);
   }
 };
 
@@ -208,4 +219,61 @@ function jsonErr(status, obj) {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" }
   });
+}
+
+// Cache yenileme fonksiyonu
+async function refreshCache(ctx, endpoint) {
+  const cache = caches.default;
+  let cacheKey, TARGET, processor;
+
+  if (endpoint === "haremaltin") {
+    cacheKey = new Request("https://cache.local/haremaltin");
+    TARGET = "https://canlipiyasalar.haremaltin.com/tmp/altin.json?dil_kodu=tr";
+    processor = (res) => res; // JSON zaten hazır
+  } else if (endpoint === "tcmb") {
+    cacheKey = new Request("https://cache.local/tcmb-today");
+    TARGET = "https://www.tcmb.gov.tr/kurlar/today.xml";
+    processor = async (res) => {
+      const xmlText = await res.text();
+      const jsonData = tcmbXmlToJson(xmlText);
+      return new Response(JSON.stringify(jsonData), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "public, max-age=30",
+          "X-Cached-At": Date.now().toString()
+        }
+      });
+    };
+  }
+
+  try {
+    const upstream = await fetch(TARGET, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": endpoint === "tcmb" ? "application/xml,text/xml;q=0.9,*/*;q=0.8" : "application/json,text/plain,*/*"
+      }
+    });
+
+    if (!upstream.ok) {
+      console.error(`Failed to refresh ${endpoint}: ${upstream.status}`);
+      return;
+    }
+
+    const processedResponse = await processor(upstream);
+    
+    if (endpoint === "haremaltin") {
+      const res = new Response(processedResponse.body, processedResponse);
+      res.headers.set("Content-Type", "application/json; charset=utf-8");
+      res.headers.set("Cache-Control", "public, max-age=5");
+      res.headers.set("X-Cached-At", Date.now().toString());
+      await cache.put(cacheKey, res);
+    } else {
+      await cache.put(cacheKey, processedResponse);
+    }
+
+    console.log(`Successfully refreshed cache for ${endpoint}`);
+  } catch (e) {
+    console.error(`Error refreshing ${endpoint}:`, e);
+  }
 }
