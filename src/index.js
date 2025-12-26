@@ -17,7 +17,17 @@ async function handleHaremAltin(ctx) {
   const cache = caches.default;
   const cacheKey = new Request("https://cache.local/haremaltin");
 
+  // Türkiye saati kontrolü (UTC+3)
+  const trHour = new Date(Date.now() + 3 * 60 * 60 * 1000).getUTCHours();
+  const isNightTime = trHour >= 0 && trHour < 6;
+
   const cached = await cache.match(cacheKey);
+  
+  // Gece saatlerinde sadece cache'den sun
+  if (isNightTime && cached) {
+    return cached;
+  }
+  
   if (cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
     if (cachedAt && Date.now() - Number(cachedAt) < 10_000) return cached;
@@ -61,7 +71,17 @@ async function handleTCMB(ctx) {
   const cache = caches.default;
   const cacheKey = new Request("https://cache.local/tcmb-today");
 
+  // Türkiye saati kontrolü (UTC+3)
+  const trHour = new Date(Date.now() + 3 * 60 * 60 * 1000).getUTCHours();
+  const isNightTime = trHour >= 0 && trHour < 6;
+
   const cached = await cache.match(cacheKey);
+  
+  // Gece saatlerinde sadece cache'den sun
+  if (isNightTime && cached) {
+    return cached;
+  }
+  
   if (cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
     if (cachedAt && Date.now() - Number(cachedAt) < 60_000) return cached;
