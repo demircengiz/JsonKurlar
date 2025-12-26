@@ -20,7 +20,7 @@ async function handleHaremAltin(ctx) {
   const cached = await cache.match(cacheKey);
   if (cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
-    if (cachedAt && Date.now() - Number(cachedAt) < 5_000) return cached;
+    if (cachedAt && Date.now() - Number(cachedAt) < 10_000) return cached;
   }
 
   const controller = new AbortController();
