@@ -4,67 +4,58 @@ export default {
 
     if (url.pathname === "/haremaltin") return handleHaremAltin(ctx);
     if (url.pathname === "/tcmb") return handleTCMB(ctx);
+    if (url.pathname === "/tumkurlar") return handleTumKurlar(ctx);
 
     return new Response(
-      JSON.stringify({ ok: false, routes: ["/haremaltin", "/tcmb"] }),
+      JSON.stringify({
+        ok: false,
+        error: "Not found",
+        routes: ["/haremaltin", "/tcmb", "/tumkurlar"]
+      }),
       { status: 404, headers: { "Content-Type": "application/json; charset=utf-8" } }
     );
   }
 };
 
+// --------------------
+// /haremaltin  (JSON proxy + cache fallback)
+// --------------------
 async function handleHaremAltin(ctx) {
-  const TARGET = "https://canlipiyasalar.haremaltin.com/tmp/altin.json?dil_kodu=tr";
-  const cache = caches.default;
-  const cacheKey = new Request("https://cache.local/haremaltin");
+  const TARGET =
+    "https://canlipiyasalar.haremaltin.com/tmp/altin.json?dil_kodu=tr";
 
-  const cached = await cache.match(cacheKey);
-  if (cached) {
-    const cachedAt = cached.headers.get("X-Cached-At");
-    if (cachedAt && Date.now() - Number(cachedAt) < 10_000) return cached;
-  }
-
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 4500);
-
-  try {
-    const upstream = await fetch(TARGET, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json,text/plain,*/*",
-        "Referer": "https://canlipiyasalar.haremaltin.com/"
-      }
-    });
-
-    if (!upstream.ok) {
-      if (cached) return cached;
-      return jsonErr(502, { ok: false, error: "Upstream failed", status: upstream.status });
-    }
-
-    const res = new Response(upstream.body, upstream);
-    res.headers.set("Content-Type", "application/json; charset=utf-8");
-    res.headers.set("Cache-Control", "public, max-age=5");
-    res.headers.set("X-Cached-At", Date.now().toString());
-
-    ctx.waitUntil(cache.put(cacheKey, res.clone()));
-    return res;
-  } catch (e) {
-    if (cached) return cached;
-    return jsonErr(502, { ok: false, error: "Fetch error", detail: String(e) });
-  } finally {
-    clearTimeout(t);
-  }
+  return proxyJsonWithCache({
+    ctx,
+    targetUrl: TARGET,
+    cacheKeyUrl: "https://cache.local/haremaltin",
+    freshMs: 10_000,        // 10 sn içinde cache HIT
+    edgeMaxAgeSec: 5,       // response Cache-Control
+    timeoutMs: 4500,
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      "Accept": "application/json,text/plain,*/*",
+      "Referer": "https://canlipiyasalar.haremaltin.com/"
+    },
+    sourceName: "haremaltin"
+  });
 }
 
+// --------------------
+// /tcmb (XML -> JSON + cache fallback)
+// --------------------
 async function handleTCMB(ctx) {
   const TARGET = "https://www.tcmb.gov.tr/kurlar/today.xml";
+
   const cache = caches.default;
   const cacheKey = new Request("https://cache.local/tcmb-today");
-
   const cached = await cache.match(cacheKey);
+
   if (cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
-    if (cachedAt && Date.now() - Number(cachedAt) < 60_000) return cached;
+    if (cachedAt && Date.now() - Number(cachedAt) < 60_000) {
+      // 60 sn cache HIT
+      return cached;
+    }
   }
 
   const controller = new AbortController();
@@ -93,7 +84,8 @@ async function handleTCMB(ctx) {
       headers: {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "public, max-age=30",
-        "X-Cached-At": Date.now().toString()
+        "X-Cached-At": Date.now().toString(),
+        "X-Cache-Status": "MISS"
       }
     });
 
@@ -107,6 +99,87 @@ async function handleTCMB(ctx) {
   }
 }
 
+// --------------------
+// /tumkurlar (JSON proxy + cache fallback)
+// --------------------
+async function handleTumKurlar(ctx) {
+  const TARGET = "http://94.54.145.159:81/tumkurlar.json";
+
+  return proxyJsonWithCache({
+    ctx,
+    targetUrl: TARGET,
+    cacheKeyUrl: "https://cache.local/tumkurlar",
+    freshMs: 10_000,       // 10 sn
+    edgeMaxAgeSec: 5,      // istersen 10 yap
+    timeoutMs: 4500,
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      "Accept": "application/json,text/plain,*/*"
+    },
+    sourceName: "tumkurlar"
+  });
+}
+
+// --------------------
+// Generic JSON proxy + cache fallback helper
+// --------------------
+async function proxyJsonWithCache({
+  ctx,
+  targetUrl,
+  cacheKeyUrl,
+  freshMs,
+  edgeMaxAgeSec,
+  timeoutMs,
+  headers,
+  sourceName
+}) {
+  const cache = caches.default;
+  const cacheKey = new Request(cacheKeyUrl);
+
+  const cached = await cache.match(cacheKey);
+
+  if (cached) {
+    const cachedAt = cached.headers.get("X-Cached-At");
+    if (cachedAt && Date.now() - Number(cachedAt) < freshMs) {
+      return cached;
+    }
+  }
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const upstream = await fetch(targetUrl, { signal: controller.signal, headers });
+
+    if (!upstream.ok) {
+      if (cached) return cached;
+      return jsonErr(502, {
+        ok: false,
+        source: sourceName,
+        error: "Upstream failed",
+        status: upstream.status
+      });
+    }
+
+    const res = new Response(upstream.body, upstream);
+    res.headers.set("Content-Type", "application/json; charset=utf-8");
+    res.headers.set("Cache-Control", `public, max-age=${edgeMaxAgeSec}`);
+    res.headers.set("X-Cached-At", Date.now().toString());
+    res.headers.set("X-Cache-Status", "MISS");
+
+    ctx.waitUntil(cache.put(cacheKey, res.clone()));
+    return res;
+  } catch (e) {
+    if (cached) return cached;
+    return jsonErr(502, { ok: false, source: sourceName, error: "Fetch error", detail: String(e) });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// --------------------
+// TCMB XML -> JSON
+// --------------------
 function tcmbXmlToJson(xmlText) {
   const dateMatch = xmlText.match(/<Tarih_Date[^>]*Tarih="([^"]+)"/i);
   const date = dateMatch ? dateMatch[1] : null;
