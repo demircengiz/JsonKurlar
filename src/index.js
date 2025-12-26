@@ -86,9 +86,9 @@ async function handleTCMB(ctx) {
     }
 
     const xmlText = await upstream.text();
-    const data = tcmbXmlToJson(xmlText);
+    const jsonData = tcmbXmlToJson(xmlText);
 
-    const res = new Response(JSON.stringify({ ok: true, source: "tcmb", data }), {
+    const res = new Response(JSON.stringify(jsonData), {
       status: 200,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
@@ -109,30 +109,46 @@ async function handleTCMB(ctx) {
 
 function tcmbXmlToJson(xmlText) {
   const dateMatch = xmlText.match(/<Tarih_Date[^>]*Tarih="([^"]+)"/i);
-  const date = dateMatch ? dateMatch[1] : null;
+  const rawDate = dateMatch ? dateMatch[1] : null;
+  
+  const now = new Date();
+  const tarih = rawDate 
+    ? `${rawDate.split('.').join('-')} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
+    : `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
 
-  const currencies = {};
+  const data = {};
   const blocks = xmlText.match(/<Currency[\s\S]*?<\/Currency>/gi) || [];
 
   for (const block of blocks) {
     const code = pickAttr(block, "CurrencyCode") || pickAttr(block, "Kod");
     if (!code) continue;
 
-    currencies[code] = {
-      code,
-      unit: numOrNull(pickTag(block, "Unit")),
-      name_tr: pickTag(block, "Isim") || null,
-      name_en: pickTag(block, "CurrencyName") || null,
-      forex_buying: numOrNull(pickTag(block, "ForexBuying")),
-      forex_selling: numOrNull(pickTag(block, "ForexSelling")),
-      banknote_buying: numOrNull(pickTag(block, "BanknoteBuying")),
-      banknote_selling: numOrNull(pickTag(block, "BanknoteSelling")),
-      cross_usd: numOrNull(pickTag(block, "CrossRateUSD")),
-      cross_other: numOrNull(pickTag(block, "CrossRateOther"))
+    const key = `${code}TRY`;
+    const alis = numOrNull(pickTag(block, "ForexBuying"));
+    const satis = numOrNull(pickTag(block, "ForexSelling"));
+
+    data[key] = {
+      code: key,
+      alis: alis,
+      satis: satis,
+      tarih: tarih,
+      dir: {
+        alis_dir: "",
+        satis_dir: ""
+      },
+      dusuk: alis,
+      yuksek: satis,
+      kapanis: alis
     };
   }
 
-  return { date, currencies };
+  return {
+    meta: {
+      time: Date.now(),
+      tarih: tarih
+    },
+    data: data
+  };
 }
 
 function pickAttr(xml, attrName) {
