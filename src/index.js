@@ -34,14 +34,13 @@ async function handleHaremAltin(ctx) {
 
   const cached = await cache.match(cacheKey);
   
-  // Gece modu: Cache varsa ve yeterince yeniyse kullan
-  if (isNightMode && cached) {
-    const cachedAt = cached.headers.get("X-Cached-At");
-    // Cache 2 saatten yeniyse kullan, değilse yeniden çek
-    if (cachedAt && Date.now() - Number(cachedAt) < 7200_000) return cached;
+  // Gece modu: Cache varsa yaşına bakmadan kullan (sabaha kadar sabit)
+  if (isNightMode) {
+    if (cached) return cached;
+    // Cache yoksa bir kere çek ve sabaha kadar bu veriyi kullan
   }
 
-  // Gündüz modu cache kontrolü
+  // Gündüz modu: Normal cache kontrolü
   if (!isNightMode && cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
     if (cachedAt && Date.now() - Number(cachedAt) < 10_000) return cached;
@@ -91,14 +90,13 @@ async function handleTCMB(ctx) {
 
   const cached = await cache.match(cacheKey);
   
-  // Gece modu: Cache varsa ve yeterince yeniyse kullan
-  if (isNightMode && cached) {
-    const cachedAt = cached.headers.get("X-Cached-At");
-    // Cache 2 saatten yeniyse kullan, değilse yeniden çek
-    if (cachedAt && Date.now() - Number(cachedAt) < 7200_000) return cached;
+  // Gece modu: Cache varsa yaşına bakmadan kullan (sabaha kadar sabit)
+  if (isNightMode) {
+    if (cached) return cached;
+    // Cache yoksa bir kere çek ve sabaha kadar bu veriyi kullan
   }
 
-  // Gündüz modu cache kontrolü
+  // Gündüz modu: Normal cache kontrolü
   if (!isNightMode && cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
     if (cachedAt && Date.now() - Number(cachedAt) < 60_000) return cached;
