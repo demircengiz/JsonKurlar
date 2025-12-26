@@ -69,7 +69,12 @@ async function handleHaremAltin(ctx) {
     res.headers.set("Cache-Control", "public, max-age=5");
     res.headers.set("X-Cached-At", Date.now().toString());
 
-    ctx.waitUntil(cache.put(cacheKey, res.clone()));
+    // Gece modunda cache yazmasını bekle (hemen yazılması gerekiyor)
+    if (isNightMode) {
+      await cache.put(cacheKey, res.clone());
+    } else {
+      ctx.waitUntil(cache.put(cacheKey, res.clone()));
+    }
     return res;
   } catch (e) {
     if (cached) return cached;
@@ -132,7 +137,12 @@ async function handleTCMB(ctx) {
       }
     });
 
-    ctx.waitUntil(cache.put(cacheKey, res.clone()));
+    // Gece modunda cache yazmasını bekle (hemen yazılması gerekiyor)
+    if (isNightMode) {
+      await cache.put(cacheKey, res.clone());
+    } else {
+      ctx.waitUntil(cache.put(cacheKey, res.clone()));
+    }
     return res;
   } catch (e) {
     if (cached) return cached;
