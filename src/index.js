@@ -13,7 +13,7 @@ export default {
 };
 
 async function handleHaremAltin(ctx) {
-  const TARGET = "https://canlipiyasalar.haremaltin.com/tmp/altin.json?dil_kodu=tr";
+  // Alternatif: Altınlar için farklı kaynaklardan veri al
   const cache = caches.default;
   const cacheKey = new Request("https://cache.local/haremaltin");
 
@@ -28,35 +28,37 @@ async function handleHaremAltin(ctx) {
   }
 
   try {
-    // AbortController olmadan fetch yap
-    const upstream = await fetch(TARGET, {
+    // Bigpara'dan altın fiyatlarını çek
+    const upstream = await fetch("https://bigpara.hurriyet.com.tr/altin/", {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json,text/plain,*/*",
-        "Referer": "https://canlipiyasalar.haremaltin.com/"
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
       },
       cf: {
-        cacheTtl: 60,
-        cacheEverything: true
+        cacheTtl: 60
       }
     });
 
     if (!upstream.ok) {
-      // Upstream başarısız, cache varsa döndür (süresi dolmuş olsa bile)
       if (cached) return cached;
       return jsonErr(502, { ok: false, error: "Upstream failed", status: upstream.status });
     }
 
-    const res = new Response(upstream.body, upstream);
-    res.headers.set("Content-Type", "application/json; charset=utf-8");
-    res.headers.set("Cache-Control", "public, max-age=60");
-    res.headers.set("X-Cached-At", Date.now().toString());
+    const html = await upstream.text();
+    const data = parseAltinHTML(html);
 
-    // Cache'i async olarak güncelle
+    const res = new Response(JSON.stringify(data), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "public, max-age=60",
+        "X-Cached-At": Date.now().toString()
+      }
+    });
+
     ctx.waitUntil(cache.put(cacheKey, res.clone()));
     return res;
   } catch (e) {
-    // Hata oluştu, cache varsa döndür (süresi dolmuş olsa bile)
     if (cached) return cached;
     return jsonErr(502, { ok: false, error: "Fetch error", detail: e.message || String(e) });
   }
@@ -117,6 +119,69 @@ async function handleTCMB(ctx) {
     if (cached) return cached;
     return jsonErr(502, { ok: false, error: "TCMB fetch error", detail: e.message || String(e) });
   }
+}
+
+function parseAltinHTML(html) {
+  const data = {};
+  const now = new Date();
+  const tarih = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+
+  // Gram Altın
+  const gramMatch = html.match(/gram-altin[\s\S]{0,500}?data-alis="([^"]+)"[\s\S]{0,100}?data-satis="([^"]+)"/i);
+  if (gramMatch) {
+    data['GRAMTIN'] = {
+      code: 'GRAMTIN',
+      adi: 'Gram Altın',
+      alis: parseFloat(gramMatch[1].replace(',', '.')) || null,
+      satis: parseFloat(gramMatch[2].replace(',', '.')) || null,
+      tarih: tarih
+    };
+  }
+
+  // Çeyrek Altın
+  const ceyrekMatch = html.match(/ceyrek-altin[\s\S]{0,500}?data-alis="([^"]+)"[\s\S]{0,100}?data-satis="([^"]+)"/i);
+  if (ceyrekMatch) {
+    data['CEYREKTIN'] = {
+      code: 'CEYREKTIN',
+      adi: 'Çeyrek Altın',
+      alis: parseFloat(ceyrekMatch[1].replace(',', '.')) || null,
+      satis: parseFloat(ceyrekMatch[2].replace(',', '.')) || null,
+      tarih: tarih
+    };
+  }
+
+  // Yarım Altın
+  const yarimMatch = html.match(/yarim-altin[\s\S]{0,500}?data-alis="([^"]+)"[\s\S]{0,100}?data-satis="([^"]+)"/i);
+  if (yarimMatch) {
+    data['YARIMTIN'] = {
+      code: 'YARIMTIN',
+      adi: 'Yarım Altın',
+      alis: parseFloat(yarimMatch[1].replace(',', '.')) || null,
+      satis: parseFloat(yarimMatch[2].replace(',', '.')) || null,
+      tarih: tarih
+    };
+  }
+
+  // Tam Altın
+  const tamMatch = html.match(/tam-altin[\s\S]{0,500}?data-alis="([^"]+)"[\s\S]{0,100}?data-satis="([^"]+)"/i);
+  if (tamMatch) {
+    data['TAMTIN'] = {
+      code: 'TAMTIN',
+      adi: 'Tam Altın',
+      alis: parseFloat(tamMatch[1].replace(',', '.')) || null,
+      satis: parseFloat(tamMatch[2].replace(',', '.')) || null,
+      tarih: tarih
+    };
+  }
+
+  return {
+    meta: {
+      time: Date.now(),
+      tarih: tarih,
+      source: "bigpara.hurriyet.com.tr"
+    },
+    data: data
+  };
 }
 
 function tcmbXmlToJson(xmlText) {
