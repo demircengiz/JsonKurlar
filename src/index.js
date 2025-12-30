@@ -4,9 +4,10 @@ export default {
 
     if (url.pathname === "/haremaltin") return handleHaremAltin(ctx);
     if (url.pathname === "/tcmb") return handleTCMB(ctx);
+    if (url.pathname === "/truncgil") return handleTruncgil(ctx);
 
     return new Response(
-      JSON.stringify({ ok: false, routes: ["/haremaltin", "/tcmb"] }),
+      JSON.stringify({ ok: false, routes: ["/haremaltin", "/tcmb", "/truncgil"] }),
       { status: 404, headers: { "Content-Type": "application/json; charset=utf-8" } }
     );
   }
@@ -108,6 +109,57 @@ async function fetchAltinkaynakSOAP(method) {
   }
 
   return await response.text();
+}
+
+async function handleTruncgil(ctx) {
+  const TARGET = "https://finans.truncgil.com/v4/today.json";
+  const cache = caches.default;
+  const cacheKey = new Request("https://cache.local/truncgil");
+
+  // Önce cache'i kontrol et
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const cachedAt = cached.headers.get("X-Cached-At");
+    // Eğer cache 2 dakikadan yeni ise direkt döndür
+    if (cachedAt && Date.now() - Number(cachedAt) < 120_000) {
+      return cached;
+    }
+  }
+
+  try {
+    const upstream = await fetch(TARGET, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
+      },
+      cf: {
+        cacheTtl: 120,
+        cacheEverything: true
+      }
+    });
+
+    if (!upstream.ok) {
+      if (cached) return cached;
+      return jsonErr(502, { ok: false, error: "Truncgil upstream failed", status: upstream.status });
+    }
+
+    const jsonData = await upstream.json();
+
+    const res = new Response(JSON.stringify(jsonData), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "public, max-age=120",
+        "X-Cached-At": Date.now().toString()
+      }
+    });
+
+    ctx.waitUntil(cache.put(cacheKey, res.clone()));
+    return res;
+  } catch (e) {
+    if (cached) return cached;
+    return jsonErr(502, { ok: false, error: "Truncgil fetch error", detail: e.message || String(e) });
+  }
 }
 
 async function handleTCMB(ctx) {
