@@ -24,7 +24,7 @@ async function handleHaremAltin(ctx) {
   }
 
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 8000);
+  const t = setTimeout(() => controller.abort(), 12000);
 
   try {
     const upstream = await fetch(TARGET, {
@@ -68,7 +68,7 @@ async function handleTCMB(ctx) {
   }
 
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 4500);
+  const t = setTimeout(() => controller.abort(), 10000);
 
   try {
     const upstream = await fetch(TARGET, {
