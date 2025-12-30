@@ -108,10 +108,17 @@ async function handleTruncgil(ctx) {
           continue; // Tekrar dene
         }
 
-        const res = new Response(upstream.body, upstream);
-        res.headers.set("Content-Type", "application/json; charset=utf-8");
-        res.headers.set("Cache-Control", "public, max-age=10");
-        res.headers.set("X-Cached-At", Date.now().toString());
+        const jsonText = await upstream.text();
+        const jsonData = truncgilToStandardFormat(jsonText);
+
+        const res = new Response(JSON.stringify(jsonData), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "public, max-age=10",
+            "X-Cached-At": Date.now().toString()
+          }
+        });
 
         ctx.waitUntil(cache.put(cacheKey, res.clone()));
         return res;
@@ -244,6 +251,47 @@ function tcmbXmlToJson(xmlText) {
     },
     data: data
   };
+}
+
+function truncgilToStandardFormat(jsonText) {
+  try {
+    const rawData = JSON.parse(jsonText);
+    const now = new Date();
+    const tarih = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+    
+    const data = {};
+    
+    // Truncgil API formatını standart formata çevir
+    for (const [key, value] of Object.entries(rawData)) {
+      if (typeof value === 'object' && value !== null) {
+        data[key] = {
+          code: key,
+          adi: value.name || value.adi || key,
+          alis: numOrNull(value.buying || value.alis),
+          satis: numOrNull(value.selling || value.satis),
+          tarih: tarih,
+          dir: {
+            alis_dir: value.changeDirection || "",
+            satis_dir: value.changeDirection || ""
+          },
+          dusuk: numOrNull(value.low || value.dusuk),
+          yuksek: numOrNull(value.high || value.yuksek),
+          kapanis: numOrNull(value.rate || value.selling || value.satis)
+        };
+      }
+    }
+    
+    return {
+      meta: {
+        time: Date.now(),
+        tarih: tarih
+      },
+      data: data
+    };
+  } catch (e) {
+    // Parse hatası durumunda orijinal veriyi döndür
+    return JSON.parse(jsonText);
+  }
 }
 
 function pickAttr(xml, attrName) {
