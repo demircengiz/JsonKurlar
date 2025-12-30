@@ -26,41 +26,29 @@ async function handleHaremAltin(ctx) {
   }
 
   try {
-    // AltınKaynak SOAP API'si
-    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-  <soap:Header>
-    <AuthHeader xmlns="http://data.altinkaynak.com/">
-      <Username>AltinkaynakWebServis</Username>
-      <Password>AltinkaynakWebServis</Password>
-    </AuthHeader>
-  </soap:Header>
-  <soap:Body>
-    <GetGold xmlns="http://data.altinkaynak.com/" />
-  </soap:Body>
-</soap:Envelope>`;
+    // GetGold ve GetCurrency SOAP isteklerini paralel yap
+    const [goldResponse, currencyResponse] = await Promise.all([
+      fetchAltinkaynakSOAP("GetGold"),
+      fetchAltinkaynakSOAP("GetCurrency")
+    ]);
 
-    const upstream = await fetch("http://data.altinkaynak.com/DataService.asmx", {
-      method: "POST",
-      headers: {
-        "Content-Type": "text/xml; charset=utf-8",
-        "SOAPAction": "http://data.altinkaynak.com/GetGold"
+    const now = new Date();
+    const tarih = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+
+    const goldData = parseAltinkaynakXML(goldResponse, "GetGoldResult");
+    const currencyData = parseAltinkaynakXML(currencyResponse, "GetCurrencyResult");
+
+    const combinedData = {
+      meta: {
+        time: Date.now(),
+        tarih: tarih,
+        source: "altinkaynak.com"
       },
-      body: soapBody,
-      cf: {
-        cacheTtl: 60
-      }
-    });
+      gold: goldData,
+      currency: currencyData
+    };
 
-    if (!upstream.ok) {
-      if (cached) return cached;
-      return jsonErr(502, { ok: false, error: "Upstream failed", status: upstream.status });
-    }
-
-    const xmlText = await upstream.text();
-    const data = parseAltinSOAP(xmlText);
-
-    const res = new Response(JSON.stringify(data), {
+    const res = new Response(JSON.stringify(combinedData), {
       status: 200,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
@@ -75,6 +63,39 @@ async function handleHaremAltin(ctx) {
     if (cached) return cached;
     return jsonErr(502, { ok: false, error: "Fetch error", detail: e.message || String(e) });
   }
+}
+
+async function fetchAltinkaynakSOAP(method) {
+  const soapBody = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Header>
+    <AuthHeader xmlns="http://data.altinkaynak.com/">
+      <Username>AltinkaynakWebServis</Username>
+      <Password>AltinkaynakWebServis</Password>
+    </AuthHeader>
+  </soap:Header>
+  <soap:Body>
+    <${method} xmlns="http://data.altinkaynak.com/" />
+  </soap:Body>
+</soap:Envelope>`;
+
+  const response = await fetch("http://data.altinkaynak.com/DataService.asmx", {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/xml; charset=utf-8",
+      "SOAPAction": `http://data.altinkaynak.com/${method}`
+    },
+    body: soapBody,
+    cf: {
+      cacheTtl: 60
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`SOAP request failed: ${response.status}`);
+  }
+
+  return await response.text();
 }
 
 async function handleTCMB(ctx) {
@@ -134,17 +155,11 @@ async function handleTCMB(ctx) {
   }
 }
 
-function parseAltinSOAP(xmlText) {
-  const now = new Date();
-  const tarih = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-
+function parseAltinkaynakXML(xmlText, resultTag) {
   // SOAP response'tan XML içeriğini çıkar
-  const resultMatch = xmlText.match(/<GetGoldResult>(.*?)<\/GetGoldResult>/s);
+  const resultMatch = xmlText.match(new RegExp(`<${resultTag}>(.*?)</${resultTag}>`, 's'));
   if (!resultMatch) {
-    return {
-      meta: { time: Date.now(), tarih: tarih, source: "altinkaynak.com", error: "Parse failed" },
-      data: {}
-    };
+    return {};
   }
 
   // HTML entities'i decode et
@@ -173,19 +188,12 @@ function parseAltinSOAP(xmlText) {
         adi: aciklama || '',
         alis: alis ? parseFloat(alis) : null,
         satis: satis ? parseFloat(satis) : null,
-        tarih: guncellenme || tarih
+        guncellenme: guncellenme || ''
       };
     }
   }
 
-  return {
-    meta: {
-      time: Date.now(),
-      tarih: tarih,
-      source: "altinkaynak.com"
-    },
-    data: data
-  };
+  return data;
 }
 
 function tcmbXmlToJson(xmlText) {
