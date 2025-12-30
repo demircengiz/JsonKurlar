@@ -4,9 +4,10 @@ export default {
 
     if (url.pathname === "/haremaltin") return handleHaremAltin(ctx);
     if (url.pathname === "/tcmb") return handleTCMB(ctx);
+    if (url.pathname === "/truncgil") return handleTruncgil(ctx);
 
     return new Response(
-      JSON.stringify({ ok: false, routes: ["/haremaltin", "/tcmb"] }),
+      JSON.stringify({ ok: false, routes: ["/haremaltin", "/tcmb", "/truncgil"] }),
       { status: 404, headers: { "Content-Type": "application/json; charset=utf-8" } }
     );
   }
@@ -37,6 +38,65 @@ async function handleHaremAltin(ctx) {
             "User-Agent": "Mozilla/5.0",
             "Accept": "application/json,text/plain,*/*",
             "Referer": "https://canlipiyasalar.haremaltin.com/"
+          }
+        });
+
+        clearTimeout(t);
+
+        if (!upstream.ok) {
+          if (attempt === 2 && cached) return cached;
+          if (attempt === 2) return jsonErr(502, { ok: false, error: "Upstream failed", status: upstream.status });
+          continue; // Tekrar dene
+        }
+
+        const res = new Response(upstream.body, upstream);
+        res.headers.set("Content-Type", "application/json; charset=utf-8");
+        res.headers.set("Cache-Control", "public, max-age=10");
+        res.headers.set("X-Cached-At", Date.now().toString());
+
+        ctx.waitUntil(cache.put(cacheKey, res.clone()));
+        return res;
+      } catch (fetchErr) {
+        clearTimeout(t);
+        if (attempt === 2) throw fetchErr;
+        // İlk denemede hata aldıysak, 100ms bekleyip tekrar dene
+        await new Promise(r => setTimeout(r, 100));
+      }
+    } catch (e) {
+      if (attempt === 2) {
+        // Tüm denemeler başarısız, eski cache varsa döndür
+        if (cached) return cached;
+        return jsonErr(502, { ok: false, error: "Fetch error", detail: String(e) });
+      }
+    }
+  }
+}
+
+async function handleTruncgil(ctx) {
+  const TARGET = "https://finans.truncgil.com/v4/today.json";
+  const cache = caches.default;
+  const cacheKey = new Request("https://cache.local/truncgil");
+
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const cachedAt = cached.headers.get("X-Cached-At");
+    // Cache'i 30 saniye boyunca kullan
+    if (cachedAt && Date.now() - Number(cachedAt) < 30_000) return cached;
+  }
+
+  // Retry mekanizması: 2 deneme, her biri max 15 saniye
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 15000);
+
+      try {
+        const upstream = await fetch(TARGET, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json,text/plain,*/*",
+            "Referer": "https://finans.truncgil.com/"
           }
         });
 
