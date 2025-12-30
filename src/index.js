@@ -122,66 +122,50 @@ async function handleTCMB(ctx) {
 }
 
 function parseAltinHTML(html) {
-  const data = {};
   const now = new Date();
   const tarih = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
 
-  // Gram Altın
-  const gramMatch = html.match(/gram-altin[\s\S]{0,500}?data-alis="([^"]+)"[\s\S]{0,100}?data-satis="([^"]+)"/i);
-  if (gramMatch) {
-    data['GRAMTIN'] = {
-      code: 'GRAMTIN',
-      adi: 'Gram Altın',
-      alis: parseFloat(gramMatch[1].replace(',', '.')) || null,
-      satis: parseFloat(gramMatch[2].replace(',', '.')) || null,
-      tarih: tarih
+  // JavaScript array'inden veriyi çek
+  const match = html.match(/var\s+\$altinData\s*=\s*(\[.+?\]);/s);
+  if (!match) {
+    return {
+      meta: { time: Date.now(), tarih: tarih, source: "bigpara.hurriyet.com.tr", error: "Parse failed" },
+      data: {}
     };
   }
 
-  // Çeyrek Altın
-  const ceyrekMatch = html.match(/ceyrek-altin[\s\S]{0,500}?data-alis="([^"]+)"[\s\S]{0,100}?data-satis="([^"]+)"/i);
-  if (ceyrekMatch) {
-    data['CEYREKTIN'] = {
-      code: 'CEYREKTIN',
-      adi: 'Çeyrek Altın',
-      alis: parseFloat(ceyrekMatch[1].replace(',', '.')) || null,
-      satis: parseFloat(ceyrekMatch[2].replace(',', '.')) || null,
-      tarih: tarih
+  try {
+    const altinData = JSON.parse(match[1]);
+    const data = {};
+
+    // Tüm altın çeşitlerini map'le
+    altinData.forEach(item => {
+      const code = item.sembolkisa || item.sembolid.toString();
+      data[code] = {
+        code: code,
+        adi: item.aciklama || '',
+        alis: item.alis || null,
+        satis: item.satis || null,
+        kapanis: item.kapanis || null,
+        degisim: item.yuzdedegisim || null,
+        tarih: tarih
+      };
+    });
+
+    return {
+      meta: {
+        time: Date.now(),
+        tarih: tarih,
+        source: "bigpara.hurriyet.com.tr"
+      },
+      data: data
+    };
+  } catch (e) {
+    return {
+      meta: { time: Date.now(), tarih: tarih, source: "bigpara.hurriyet.com.tr", error: e.message },
+      data: {}
     };
   }
-
-  // Yarım Altın
-  const yarimMatch = html.match(/yarim-altin[\s\S]{0,500}?data-alis="([^"]+)"[\s\S]{0,100}?data-satis="([^"]+)"/i);
-  if (yarimMatch) {
-    data['YARIMTIN'] = {
-      code: 'YARIMTIN',
-      adi: 'Yarım Altın',
-      alis: parseFloat(yarimMatch[1].replace(',', '.')) || null,
-      satis: parseFloat(yarimMatch[2].replace(',', '.')) || null,
-      tarih: tarih
-    };
-  }
-
-  // Tam Altın
-  const tamMatch = html.match(/tam-altin[\s\S]{0,500}?data-alis="([^"]+)"[\s\S]{0,100}?data-satis="([^"]+)"/i);
-  if (tamMatch) {
-    data['TAMTIN'] = {
-      code: 'TAMTIN',
-      adi: 'Tam Altın',
-      alis: parseFloat(tamMatch[1].replace(',', '.')) || null,
-      satis: parseFloat(tamMatch[2].replace(',', '.')) || null,
-      tarih: tarih
-    };
-  }
-
-  return {
-    meta: {
-      time: Date.now(),
-      tarih: tarih,
-      source: "bigpara.hurriyet.com.tr"
-    },
-    data: data
-  };
 }
 
 function tcmbXmlToJson(xmlText) {
