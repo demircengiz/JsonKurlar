@@ -4,161 +4,70 @@ export default {
 
     if (url.pathname === "/haremaltin") return handleHaremAltin(ctx);
     if (url.pathname === "/tcmb") return handleTCMB(ctx);
-    if (url.pathname === "/truncgil") return handleTruncgil(ctx);
 
     return new Response(
-      JSON.stringify({ ok: false, routes: ["/haremaltin", "/tcmb", "/truncgil"] }),
+      JSON.stringify({ ok: false, routes: ["/haremaltin", "/tcmb"] }),
       { status: 404, headers: { "Content-Type": "application/json; charset=utf-8" } }
     );
   }
 };
 
 async function handleHaremAltin(ctx) {
+  const TARGET = "https://canlipiyasalar.haremaltin.com/tmp/altin.json?dil_kodu=tr";
   const cache = caches.default;
   const cacheKey = new Request("https://cache.local/haremaltin");
 
-  // Önce cache'i kontrol et
   const cached = await cache.match(cacheKey);
   if (cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
-    if (cachedAt && Date.now() - Number(cachedAt) < 120_000) {
-      return cached;
-    }
+    // Cache'i 30 saniye boyunca kullan
+    if (cachedAt && Date.now() - Number(cachedAt) < 30_000) return cached;
   }
 
-  try {
-    // GetGold, GetCurrency ve GetMain SOAP isteklerini paralel yap
-    const [goldResponse, currencyResponse, mainResponse] = await Promise.all([
-      fetchAltinkaynakSOAP("GetGold"),
-      fetchAltinkaynakSOAP("GetCurrency"),
-      fetchAltinkaynakSOAP("GetMain")
-    ]);
+  // Retry mekanizması: 2 deneme, her biri max 15 saniye
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 15000);
 
-    const now = new Date();
-    const tarih = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+      try {
+        const upstream = await fetch(TARGET, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json,text/plain,*/*",
+            "Referer": "https://canlipiyasalar.haremaltin.com/"
+          }
+        });
 
-    const goldData = parseAltinkaynakXML(goldResponse, "GetGoldResult");
-    const currencyData = parseAltinkaynakXML(currencyResponse, "GetCurrencyResult");
-    const mainData = parseAltinkaynakXML(mainResponse, "GetMainResult");
+        clearTimeout(t);
 
-    // Tüm verileri tek bir Altinkaynak objesi altında birleştir
-    const Altinkaynak = {
-      ...goldData,
-      ...currencyData
-    };
+        if (!upstream.ok) {
+          if (attempt === 2 && cached) return cached;
+          if (attempt === 2) return jsonErr(502, { ok: false, error: "Upstream failed", status: upstream.status });
+          continue; // Tekrar dene
+        }
 
-    // GetMain'den sadece ONS bilgisini ekle
-    if (mainData.ONS) {
-      Altinkaynak.ONS = mainData.ONS;
-    }
+        const res = new Response(upstream.body, upstream);
+        res.headers.set("Content-Type", "application/json; charset=utf-8");
+        res.headers.set("Cache-Control", "public, max-age=10");
+        res.headers.set("X-Cached-At", Date.now().toString());
 
-    const combinedData = {
-      meta: {
-        time: Date.now(),
-        tarih: tarih,
-        source: "altinkaynak.com"
-      },
-      Altinkaynak: Altinkaynak
-    };
-
-    const res = new Response(JSON.stringify(combinedData), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "public, max-age=60",
-        "X-Cached-At": Date.now().toString()
+        ctx.waitUntil(cache.put(cacheKey, res.clone()));
+        return res;
+      } catch (fetchErr) {
+        clearTimeout(t);
+        if (attempt === 2) throw fetchErr;
+        // İlk denemede hata aldıysak, 100ms bekleyip tekrar dene
+        await new Promise(r => setTimeout(r, 100));
       }
-    });
-
-    ctx.waitUntil(cache.put(cacheKey, res.clone()));
-    return res;
-  } catch (e) {
-    if (cached) return cached;
-    return jsonErr(502, { ok: false, error: "Fetch error", detail: e.message || String(e) });
-  }
-}
-
-async function fetchAltinkaynakSOAP(method) {
-  const soapBody = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-  <soap:Header>
-    <AuthHeader xmlns="http://data.altinkaynak.com/">
-      <Username>AltinkaynakWebServis</Username>
-      <Password>AltinkaynakWebServis</Password>
-    </AuthHeader>
-  </soap:Header>
-  <soap:Body>
-    <${method} xmlns="http://data.altinkaynak.com/" />
-  </soap:Body>
-</soap:Envelope>`;
-
-  const response = await fetch("http://data.altinkaynak.com/DataService.asmx", {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/xml; charset=utf-8",
-      "SOAPAction": `http://data.altinkaynak.com/${method}`
-    },
-    body: soapBody,
-    cf: {
-      cacheTtl: 60
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`SOAP request failed: ${response.status}`);
-  }
-
-  return await response.text();
-}
-
-async function handleTruncgil(ctx) {
-  const TARGET = "https://finans.truncgil.com/v4/today.json";
-  const cache = caches.default;
-  const cacheKey = new Request("https://cache.local/truncgil");
-
-  // Önce cache'i kontrol et
-  const cached = await cache.match(cacheKey);
-  if (cached) {
-    const cachedAt = cached.headers.get("X-Cached-At");
-    // Eğer cache 2 dakikadan yeni ise direkt döndür
-    if (cachedAt && Date.now() - Number(cachedAt) < 120_000) {
-      return cached;
-    }
-  }
-
-  try {
-    const upstream = await fetch(TARGET, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json"
-      },
-      cf: {
-        cacheTtl: 120,
-        cacheEverything: true
+    } catch (e) {
+      if (attempt === 2) {
+        // Tüm denemeler başarısız, eski cache varsa döndür
+        if (cached) return cached;
+        return jsonErr(502, { ok: false, error: "Fetch error", detail: String(e) });
       }
-    });
-
-    if (!upstream.ok) {
-      if (cached) return cached;
-      return jsonErr(502, { ok: false, error: "Truncgil upstream failed", status: upstream.status });
     }
-
-    const jsonData = await upstream.json();
-
-    const res = new Response(JSON.stringify(jsonData), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "public, max-age=120",
-        "X-Cached-At": Date.now().toString()
-      }
-    });
-
-    ctx.waitUntil(cache.put(cacheKey, res.clone()));
-    return res;
-  } catch (e) {
-    if (cached) return cached;
-    return jsonErr(502, { ok: false, error: "Truncgil fetch error", detail: e.message || String(e) });
   }
 }
 
@@ -167,97 +76,65 @@ async function handleTCMB(ctx) {
   const cache = caches.default;
   const cacheKey = new Request("https://cache.local/tcmb-today");
 
-  // Önce cache'i kontrol et
   const cached = await cache.match(cacheKey);
   if (cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
-    // Eğer cache 5 dakikadan yeni ise direkt döndür
-    if (cachedAt && Date.now() - Number(cachedAt) < 300_000) {
-      return cached;
-    }
+    // Cache'i 5 dakika boyunca kullan
+    if (cachedAt && Date.now() - Number(cachedAt) < 300_000) return cached;
   }
 
-  try {
-    // AbortController olmadan fetch yap
-    const upstream = await fetch(TARGET, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8",
-        "Referer": "https://www.tcmb.gov.tr/"
-      },
-      cf: {
-        cacheTtl: 180,
-        cacheEverything: true
+  // Retry mekanizması: 2 deneme, her biri max 15 saniye
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 15000);
+
+      try {
+        const upstream = await fetch(TARGET, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8",
+            "Referer": "https://www.tcmb.gov.tr/"
+          }
+        });
+
+        clearTimeout(t);
+
+        if (!upstream.ok) {
+          if (attempt === 2 && cached) return cached;
+          if (attempt === 2) return jsonErr(502, { ok: false, error: "TCMB upstream failed", status: upstream.status });
+          continue; // Tekrar dene
+        }
+
+        const xmlText = await upstream.text();
+        const jsonData = tcmbXmlToJson(xmlText);
+
+        const res = new Response(JSON.stringify(jsonData), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "public, max-age=60",
+            "X-Cached-At": Date.now().toString()
+          }
+        });
+
+        ctx.waitUntil(cache.put(cacheKey, res.clone()));
+        return res;
+      } catch (fetchErr) {
+        clearTimeout(t);
+        if (attempt === 2) throw fetchErr;
+        // İlk denemede hata aldıysak, 100ms bekleyip tekrar dene
+        await new Promise(r => setTimeout(r, 100));
       }
-    });
-
-    if (!upstream.ok) {
-      // Upstream başarısız, cache varsa döndür (süresi dolmuş olsa bile)
-      if (cached) return cached;
-      return jsonErr(502, { ok: false, error: "TCMB upstream failed", status: upstream.status });
-    }
-
-    const xmlText = await upstream.text();
-    const jsonData = tcmbXmlToJson(xmlText);
-
-    const res = new Response(JSON.stringify(jsonData), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "public, max-age=180",
-        "X-Cached-At": Date.now().toString()
+    } catch (e) {
+      if (attempt === 2) {
+        // Tüm denemeler başarısız, eski cache varsa döndür
+        if (cached) return cached;
+        return jsonErr(502, { ok: false, error: "TCMB fetch error", detail: String(e) });
       }
-    });
-
-    // Cache'i async olarak güncelle
-    ctx.waitUntil(cache.put(cacheKey, res.clone()));
-    return res;
-  } catch (e) {
-    // Hata oluştu, cache varsa döndür (süresi dolmuş olsa bile)
-    if (cached) return cached;
-    return jsonErr(502, { ok: false, error: "TCMB fetch error", detail: e.message || String(e) });
-  }
-}
-
-function parseAltinkaynakXML(xmlText, resultTag) {
-  // SOAP response'tan XML içeriğini çıkar
-  const resultMatch = xmlText.match(new RegExp(`<${resultTag}>(.*?)</${resultTag}>`, 's'));
-  if (!resultMatch) {
-    return {};
-  }
-
-  // HTML entities'i decode et
-  const decodedXml = resultMatch[1]
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&');
-
-  const data = {};
-  
-  // Her bir <Kur> bloğunu parse et
-  const kurBlocks = decodedXml.match(/<Kur>[\s\S]*?<\/Kur>/g) || [];
-  
-  for (const block of kurBlocks) {
-    const kod = (block.match(/<Kod>(.*?)<\/Kod>/) || [])[1];
-    const aciklama = (block.match(/<Aciklama>(.*?)<\/Aciklama>/) || [])[1];
-    const alis = (block.match(/<Alis>(.*?)<\/Alis>/) || [])[1];
-    const satis = (block.match(/<Satis>(.*?)<\/Satis>/) || [])[1];
-    const guncellenme = (block.match(/<GuncellenmeZamani>(.*?)<\/GuncellenmeZamani>/) || [])[1];
-
-    if (kod) {
-      data[kod] = {
-        code: kod,
-        adi: aciklama || '',
-        alis: alis ? parseFloat(alis) : null,
-        satis: satis ? parseFloat(satis) : null,
-        guncellenme: guncellenme || ''
-      };
     }
   }
-
-  return data;
 }
 
 function tcmbXmlToJson(xmlText) {
