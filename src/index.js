@@ -40,15 +40,24 @@ async function handleHaremAltin(ctx) {
     const currencyData = parseAltinkaynakXML(currencyResponse, "GetCurrencyResult");
     const mainData = parseAltinkaynakXML(mainResponse, "GetMainResult");
 
+    // Tüm verileri tek bir Altinkaynak objesi altında birleştir
+    const Altinkaynak = {
+      ...goldData,
+      ...currencyData
+    };
+
+    // GetMain'den sadece ONS bilgisini ekle
+    if (mainData.ONS) {
+      Altinkaynak.ONS = mainData.ONS;
+    }
+
     const combinedData = {
       meta: {
         time: Date.now(),
         tarih: tarih,
         source: "altinkaynak.com"
       },
-      gold: goldData,
-      currency: currencyData,
-      main: mainData
+      Altinkaynak: Altinkaynak
     };
 
     const res = new Response(JSON.stringify(combinedData), {
