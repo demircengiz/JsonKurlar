@@ -266,17 +266,17 @@ function truncgilToStandardFormat(jsonText) {
       if (typeof value === 'object' && value !== null) {
         data[key] = {
           code: key,
-          adi: value.name || value.adi || key,
-          alis: numOrNull(value.buying || value.alis),
-          satis: numOrNull(value.selling || value.satis),
+          adi: value.Name || value.name || value.adi || key,
+          alis: numOrNull(value.Buying || value.buying || value.alis),
+          satis: numOrNull(value.Selling || value.selling || value.satis),
           tarih: tarih,
           dir: {
-            alis_dir: value.changeDirection || "",
-            satis_dir: value.changeDirection || ""
+            alis_dir: value.ChangeDirection || value.changeDirection || "",
+            satis_dir: value.ChangeDirection || value.changeDirection || ""
           },
-          dusuk: numOrNull(value.low || value.dusuk),
-          yuksek: numOrNull(value.high || value.yuksek),
-          kapanis: numOrNull(value.rate || value.selling || value.satis)
+          dusuk: numOrNull(value.Low || value.low || value.dusuk),
+          yuksek: numOrNull(value.High || value.high || value.yuksek),
+          kapanis: numOrNull(value.Rate || value.rate || value.Selling || value.selling || value.satis)
         };
       }
     }
