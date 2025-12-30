@@ -13,7 +13,6 @@ export default {
 };
 
 async function handleHaremAltin(ctx) {
-  // Alternatif: Altınlar için farklı kaynaklardan veri al
   const cache = caches.default;
   const cacheKey = new Request("https://cache.local/haremaltin");
 
@@ -21,19 +20,33 @@ async function handleHaremAltin(ctx) {
   const cached = await cache.match(cacheKey);
   if (cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
-    // Eğer cache 2 dakikadan yeni ise direkt döndür
     if (cachedAt && Date.now() - Number(cachedAt) < 120_000) {
       return cached;
     }
   }
 
   try {
-    // Bigpara'dan altın fiyatlarını çek
-    const upstream = await fetch("https://bigpara.hurriyet.com.tr/altin/", {
+    // AltınKaynak SOAP API'si
+    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Header>
+    <AuthHeader xmlns="http://data.altinkaynak.com/">
+      <Username>AltinkaynakWebServis</Username>
+      <Password>AltinkaynakWebServis</Password>
+    </AuthHeader>
+  </soap:Header>
+  <soap:Body>
+    <GetGold xmlns="http://data.altinkaynak.com/" />
+  </soap:Body>
+</soap:Envelope>`;
+
+    const upstream = await fetch("http://data.altinkaynak.com/DataService.asmx", {
+      method: "POST",
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        "Content-Type": "text/xml; charset=utf-8",
+        "SOAPAction": "http://data.altinkaynak.com/GetGold"
       },
+      body: soapBody,
       cf: {
         cacheTtl: 60
       }
@@ -44,8 +57,8 @@ async function handleHaremAltin(ctx) {
       return jsonErr(502, { ok: false, error: "Upstream failed", status: upstream.status });
     }
 
-    const html = await upstream.text();
-    const data = parseAltinHTML(html);
+    const xmlText = await upstream.text();
+    const data = parseAltinSOAP(xmlText);
 
     const res = new Response(JSON.stringify(data), {
       status: 200,
@@ -121,51 +134,58 @@ async function handleTCMB(ctx) {
   }
 }
 
-function parseAltinHTML(html) {
+function parseAltinSOAP(xmlText) {
   const now = new Date();
   const tarih = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
 
-  // JavaScript array'inden veriyi çek
-  const match = html.match(/var\s+\$altinData\s*=\s*(\[.+?\]);/s);
-  if (!match) {
+  // SOAP response'tan XML içeriğini çıkar
+  const resultMatch = xmlText.match(/<GetGoldResult>(.*?)<\/GetGoldResult>/s);
+  if (!resultMatch) {
     return {
-      meta: { time: Date.now(), tarih: tarih, source: "bigpara.hurriyet.com.tr", error: "Parse failed" },
+      meta: { time: Date.now(), tarih: tarih, source: "altinkaynak.com", error: "Parse failed" },
       data: {}
     };
   }
 
-  try {
-    const altinData = JSON.parse(match[1]);
-    const data = {};
+  // HTML entities'i decode et
+  const decodedXml = resultMatch[1]
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
 
-    // Tüm altın çeşitlerini map'le
-    altinData.forEach(item => {
-      const code = item.sembolkisa || item.sembolid.toString();
-      data[code] = {
-        code: code,
-        adi: item.aciklama || '',
-        alis: item.alis || null,
-        satis: item.satis || null,
-        kapanis: item.kapanis || null,
-        degisim: item.yuzdedegisim || null,
-        tarih: tarih
+  const data = {};
+  
+  // Her bir <Kur> bloğunu parse et
+  const kurBlocks = decodedXml.match(/<Kur>[\s\S]*?<\/Kur>/g) || [];
+  
+  for (const block of kurBlocks) {
+    const kod = (block.match(/<Kod>(.*?)<\/Kod>/) || [])[1];
+    const aciklama = (block.match(/<Aciklama>(.*?)<\/Aciklama>/) || [])[1];
+    const alis = (block.match(/<Alis>(.*?)<\/Alis>/) || [])[1];
+    const satis = (block.match(/<Satis>(.*?)<\/Satis>/) || [])[1];
+    const guncellenme = (block.match(/<GuncellenmeZamani>(.*?)<\/GuncellenmeZamani>/) || [])[1];
+
+    if (kod) {
+      data[kod] = {
+        code: kod,
+        adi: aciklama || '',
+        alis: alis ? parseFloat(alis) : null,
+        satis: satis ? parseFloat(satis) : null,
+        tarih: guncellenme || tarih
       };
-    });
-
-    return {
-      meta: {
-        time: Date.now(),
-        tarih: tarih,
-        source: "bigpara.hurriyet.com.tr"
-      },
-      data: data
-    };
-  } catch (e) {
-    return {
-      meta: { time: Date.now(), tarih: tarih, source: "bigpara.hurriyet.com.tr", error: e.message },
-      data: {}
-    };
+    }
   }
+
+  return {
+    meta: {
+      time: Date.now(),
+      tarih: tarih,
+      source: "altinkaynak.com"
+    },
+    data: data
+  };
 }
 
 function tcmbXmlToJson(xmlText) {
