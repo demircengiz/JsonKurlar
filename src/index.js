@@ -26,10 +26,11 @@ async function handleHaremAltin(ctx) {
   }
 
   try {
-    // GetGold ve GetCurrency SOAP isteklerini paralel yap
-    const [goldResponse, currencyResponse] = await Promise.all([
+    // GetGold, GetCurrency ve GetMain SOAP isteklerini paralel yap
+    const [goldResponse, currencyResponse, mainResponse] = await Promise.all([
       fetchAltinkaynakSOAP("GetGold"),
-      fetchAltinkaynakSOAP("GetCurrency")
+      fetchAltinkaynakSOAP("GetCurrency"),
+      fetchAltinkaynakSOAP("GetMain")
     ]);
 
     const now = new Date();
@@ -37,6 +38,7 @@ async function handleHaremAltin(ctx) {
 
     const goldData = parseAltinkaynakXML(goldResponse, "GetGoldResult");
     const currencyData = parseAltinkaynakXML(currencyResponse, "GetCurrencyResult");
+    const mainData = parseAltinkaynakXML(mainResponse, "GetMainResult");
 
     const combinedData = {
       meta: {
@@ -45,7 +47,8 @@ async function handleHaremAltin(ctx) {
         source: "altinkaynak.com"
       },
       gold: goldData,
-      currency: currencyData
+      currency: currencyData,
+      main: mainData
     };
 
     const res = new Response(JSON.stringify(combinedData), {
