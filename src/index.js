@@ -21,7 +21,8 @@ async function handleHaremAltin(ctx) {
   const cached = await cache.match(cacheKey);
   if (cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
-    if (cachedAt && Date.now() - Number(cachedAt) < 30_000) {
+    // Eğer cache 2 dakikadan yeni ise direkt döndür
+    if (cachedAt && Date.now() - Number(cachedAt) < 120_000) {
       return cached;
     }
   }
@@ -33,25 +34,29 @@ async function handleHaremAltin(ctx) {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json,text/plain,*/*",
         "Referer": "https://canlipiyasalar.haremaltin.com/"
+      },
+      cf: {
+        cacheTtl: 60,
+        cacheEverything: true
       }
     });
 
     if (!upstream.ok) {
-      // Upstream başarısız, cache varsa döndür
+      // Upstream başarısız, cache varsa döndür (süresi dolmuş olsa bile)
       if (cached) return cached;
       return jsonErr(502, { ok: false, error: "Upstream failed", status: upstream.status });
     }
 
     const res = new Response(upstream.body, upstream);
     res.headers.set("Content-Type", "application/json; charset=utf-8");
-    res.headers.set("Cache-Control", "public, max-age=30");
+    res.headers.set("Cache-Control", "public, max-age=60");
     res.headers.set("X-Cached-At", Date.now().toString());
 
     // Cache'i async olarak güncelle
     ctx.waitUntil(cache.put(cacheKey, res.clone()));
     return res;
   } catch (e) {
-    // Hata oluştu, cache varsa döndür
+    // Hata oluştu, cache varsa döndür (süresi dolmuş olsa bile)
     if (cached) return cached;
     return jsonErr(502, { ok: false, error: "Fetch error", detail: e.message || String(e) });
   }
@@ -66,7 +71,8 @@ async function handleTCMB(ctx) {
   const cached = await cache.match(cacheKey);
   if (cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
-    if (cachedAt && Date.now() - Number(cachedAt) < 180_000) {
+    // Eğer cache 5 dakikadan yeni ise direkt döndür
+    if (cachedAt && Date.now() - Number(cachedAt) < 300_000) {
       return cached;
     }
   }
@@ -78,11 +84,15 @@ async function handleTCMB(ctx) {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8",
         "Referer": "https://www.tcmb.gov.tr/"
+      },
+      cf: {
+        cacheTtl: 180,
+        cacheEverything: true
       }
     });
 
     if (!upstream.ok) {
-      // Upstream başarısız, cache varsa döndür
+      // Upstream başarısız, cache varsa döndür (süresi dolmuş olsa bile)
       if (cached) return cached;
       return jsonErr(502, { ok: false, error: "TCMB upstream failed", status: upstream.status });
     }
@@ -94,7 +104,7 @@ async function handleTCMB(ctx) {
       status: 200,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "public, max-age=60",
+        "Cache-Control": "public, max-age=180",
         "X-Cached-At": Date.now().toString()
       }
     });
@@ -103,7 +113,7 @@ async function handleTCMB(ctx) {
     ctx.waitUntil(cache.put(cacheKey, res.clone()));
     return res;
   } catch (e) {
-    // Hata oluştu, cache varsa döndür
+    // Hata oluştu, cache varsa döndür (süresi dolmuş olsa bile)
     if (cached) return cached;
     return jsonErr(502, { ok: false, error: "TCMB fetch error", detail: e.message || String(e) });
   }
