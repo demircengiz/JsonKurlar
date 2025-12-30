@@ -17,42 +17,43 @@ async function handleHaremAltin(ctx) {
   const cache = caches.default;
   const cacheKey = new Request("https://cache.local/haremaltin");
 
+  // Önce cache'i kontrol et
   const cached = await cache.match(cacheKey);
   if (cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
-    if (cachedAt && Date.now() - Number(cachedAt) < 5_000) return cached;
+    if (cachedAt && Date.now() - Number(cachedAt) < 30_000) {
+      return cached;
+    }
   }
 
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 12000);
-
   try {
+    // AbortController olmadan fetch yap
     const upstream = await fetch(TARGET, {
-      signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json,text/plain,*/*",
         "Referer": "https://canlipiyasalar.haremaltin.com/"
       }
     });
 
     if (!upstream.ok) {
+      // Upstream başarısız, cache varsa döndür
       if (cached) return cached;
       return jsonErr(502, { ok: false, error: "Upstream failed", status: upstream.status });
     }
 
     const res = new Response(upstream.body, upstream);
     res.headers.set("Content-Type", "application/json; charset=utf-8");
-    res.headers.set("Cache-Control", "public, max-age=5");
+    res.headers.set("Cache-Control", "public, max-age=30");
     res.headers.set("X-Cached-At", Date.now().toString());
 
+    // Cache'i async olarak güncelle
     ctx.waitUntil(cache.put(cacheKey, res.clone()));
     return res;
   } catch (e) {
+    // Hata oluştu, cache varsa döndür
     if (cached) return cached;
-    return jsonErr(502, { ok: false, error: "Fetch error", detail: String(e) });
-  } finally {
-    clearTimeout(t);
+    return jsonErr(502, { ok: false, error: "Fetch error", detail: e.message || String(e) });
   }
 }
 
@@ -61,26 +62,27 @@ async function handleTCMB(ctx) {
   const cache = caches.default;
   const cacheKey = new Request("https://cache.local/tcmb-today");
 
+  // Önce cache'i kontrol et
   const cached = await cache.match(cacheKey);
   if (cached) {
     const cachedAt = cached.headers.get("X-Cached-At");
-    if (cachedAt && Date.now() - Number(cachedAt) < 180_000) return cached;
+    if (cachedAt && Date.now() - Number(cachedAt) < 180_000) {
+      return cached;
+    }
   }
 
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 10000);
-
   try {
+    // AbortController olmadan fetch yap
     const upstream = await fetch(TARGET, {
-      signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8",
         "Referer": "https://www.tcmb.gov.tr/"
       }
     });
 
     if (!upstream.ok) {
+      // Upstream başarısız, cache varsa döndür
       if (cached) return cached;
       return jsonErr(502, { ok: false, error: "TCMB upstream failed", status: upstream.status });
     }
@@ -92,18 +94,18 @@ async function handleTCMB(ctx) {
       status: 200,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "public, max-age=30",
+        "Cache-Control": "public, max-age=60",
         "X-Cached-At": Date.now().toString()
       }
     });
 
+    // Cache'i async olarak güncelle
     ctx.waitUntil(cache.put(cacheKey, res.clone()));
     return res;
   } catch (e) {
+    // Hata oluştu, cache varsa döndür
     if (cached) return cached;
-    return jsonErr(502, { ok: false, error: "TCMB fetch error", detail: String(e) });
-  } finally {
-    clearTimeout(t);
+    return jsonErr(502, { ok: false, error: "TCMB fetch error", detail: e.message || String(e) });
   }
 }
 
